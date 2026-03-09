@@ -304,7 +304,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void About_Click(object sender, RoutedEventArgs e)
     {
         MessageBox.Show(
-            "Notepad++ WPF Clone\n\nRusu Luca-Andrei\n10LF243\nluca.rusu@student.untibv.ro\n\nFeatures:\n• Multi-tab editing\n• Find & Replace\n• Zoom controls\n• Word wrap toggle\n• Recent files\n• Line numbers",
+            "Notepad++ WPF Clone\n\nRusu Luca-Andrei\n10LF243\nluca.rusu@student.untibv.ro",
             "About Notepad++ WPF",
             MessageBoxButton.OK,
             MessageBoxImage.Information);
