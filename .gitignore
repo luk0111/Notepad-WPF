@@ -1,0 +1,60 @@
+copilot-snapshots/
+
+# Build output
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# VS Code
+.vscode/
+
+# Rider
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# NuGet
+*.nupkg
+# Package directories
+packages/
+
+# Logs
+*.log
+
+# Test results
+TestResults/
+
+# Publish
+*.publish.xml
+
+# Others
+*.DS_Store
+
+.vs/
+.CopilotWorkspace/
+
+# Ignore temporary files
+~$*
+*.tmp
+*.bak
+
+# Ignore coverage reports
+coverage/
+*.coverage
+*.coveragexml
+
+# Ignore generated files
+*.generated.cs
+
+# Ignore local settings
+*.local.json
+
+# Ignore ReSharper
+_ReSharper*/
