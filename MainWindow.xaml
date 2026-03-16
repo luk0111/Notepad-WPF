@@ -232,6 +232,8 @@
                 <MenuItem Header="_Save" Click="Save_Click" InputGestureText="Ctrl+S"/>
                 <MenuItem Header="Save _As" Click="SaveAs_Click"/>
                 <Separator/>
+                <MenuItem Header="Close _All Tabs" Click="CloseAllTabs_Click"/>
+                <Separator/>
                 <MenuItem Header="_Recent Files" x:Name="RecentFilesMenu"/>
                 <Separator/>
                 <MenuItem Header="_Close Tab" Click="CloseTab_Click"/>
@@ -255,6 +257,11 @@
                 <MenuItem Header="_Replace..." Command="local:CustomCommands.Replace" InputGestureText="Ctrl+H"/>
                 <Separator/>
                 <MenuItem Header="_Go To Line..." Command="local:CustomCommands.GoToLine" InputGestureText="Ctrl+G"/>
+                <Separator/>
+                <MenuItem Header="Scope">
+                    <MenuItem x:Name="SelectedTabScopeMenuItem" Header="Selected tab" IsCheckable="True" IsChecked="True" Click="ScopeMenu_Click"/>
+                    <MenuItem x:Name="AllTabsScopeMenuItem" Header="All tabs" IsCheckable="True" Click="ScopeMenu_Click"/>
+                </MenuItem>
             </MenuItem>
             <MenuItem Header="_View">
                 <MenuItem Header="_Word Wrap" x:Name="WordWrapMenuItem" IsCheckable="True" Click="WordWrap_Click"/>
@@ -292,20 +299,10 @@
                     <TextBlock Text="📑" FontSize="16"/>
                 </Button>
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Background="#64B5F6" Margin="6,4"/>
-                <Button Style="{StaticResource ToolbarButtonStyle}" Command="ApplicationCommands.Cut" ToolTip="Cut (Ctrl+X)">
-                    <TextBlock Text="✂" FontSize="16"/>
-                </Button>
-                <Button Style="{StaticResource ToolbarButtonStyle}" Command="ApplicationCommands.Copy" ToolTip="Copy (Ctrl+C)">
-                    <TextBlock Text="📋" FontSize="16"/>
-                </Button>
-                <Button Style="{StaticResource ToolbarButtonStyle}" Command="ApplicationCommands.Paste" ToolTip="Paste (Ctrl+V)">
-                    <TextBlock Text="📌" FontSize="16"/>
-                </Button>
-                <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Background="#64B5F6" Margin="6,4"/>
-                <Button Style="{StaticResource ToolbarButtonStyle}" Command="ApplicationCommands.Undo" ToolTip="Undo (Ctrl+Z)">
+                <Button Style="{StaticResource ToolbarButtonStyle}" Click="Undo_Click" ToolTip="Undo (Ctrl+Z)">
                     <TextBlock Text="↩" FontSize="16"/>
                 </Button>
-                <Button Style="{StaticResource ToolbarButtonStyle}" Command="ApplicationCommands.Redo" ToolTip="Redo (Ctrl+Y)">
+                <Button Style="{StaticResource ToolbarButtonStyle}" Click="Redo_Click" ToolTip="Redo (Ctrl+Y)">
                     <TextBlock Text="↪" FontSize="16"/>
                 </Button>
                 <Separator Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}" Background="#64B5F6" Margin="6,4"/>
@@ -415,6 +412,16 @@
                 <Button Content="✕" Click="CloseGoToLine_Click" 
                         Style="{StaticResource SearchPanelButtonStyle}" FontWeight="Bold"/>
             </StackPanel>
+        </Border>
+
+        <!-- file explorer -->
+        <Border DockPanel.Dock="Left" Width="300" Padding="8" Background="{StaticResource BackgroundLight}" BorderBrush="{StaticResource BorderLight}" BorderThickness="0,0,1,0">
+            <DockPanel>
+                <TextBlock Text="File Explorer" FontWeight="SemiBold" Margin="2,0,0,8" Foreground="{StaticResource TextPrimary}" DockPanel.Dock="Top"/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <TreeView x:Name="FileTreeView" />
+                </ScrollViewer>
+            </DockPanel>
         </Border>
 
         <!-- containere tab -->

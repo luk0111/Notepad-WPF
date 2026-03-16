@@ -15,6 +15,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public ObservableCollection<TabDocument> Documents { get; } = [];
     private List<string> _recentFiles = [];
     private const int MaxRecentFiles = 10;
+    // For copy/paste folder operations
+    private string? _copiedFolderTempPath = null;
+    private string? _copiedFolderOriginalName = null;
+    // Search/replace scope: when true, operations apply to all open tabs
+    private bool _searchInAllTabs = false;
     
     private double _editorFontSize = 14;
     public double EditorFontSize
@@ -26,6 +31,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             OnPropertyChanged(nameof(EditorFontSize));
             UpdateZoomDisplay();
         }
+    }
+
+    private TextBox? GetEditorForDocument(TabDocument doc)
+    {
+        var container = TabContainer.ItemContainerGenerator.ContainerFromItem(doc) as TabItem;
+        if (container == null) return null;
+
+        var contentPresenter = FindVisualChild<ContentPresenter>(container);
+        if (contentPresenter == null) return null;
+
+        contentPresenter.ApplyTemplate();
+        return FindVisualChild<TextBox>(contentPresenter);
     }
     
     private TextWrapping _wordWrapMode = TextWrapping.NoWrap;
@@ -43,14 +60,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     protected void OnPropertyChanged(string propertyName) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 
+    private ViewModels.MainViewModel? _viewModel;
+
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = this;
-        TabContainer.ItemsSource = Documents;
+        // create viewmodel and pass existing documents and actions to reuse code-behind logic
+        _viewModel = new ViewModels.MainViewModel(Documents,
+            newAction: () => CreateNewTab(),
+            openAction: () => Open_Click(this, new RoutedEventArgs()),
+            saveAction: () => Save_Click(this, new RoutedEventArgs()),
+            saveAllAction: () => SaveAll_Click(this, new RoutedEventArgs()),
+            closeAction: () => CloseTab_Click(this, new RoutedEventArgs())
+        );
+
+        DataContext = _viewModel;
+        TabContainer.ItemsSource = _viewModel.Documents;
+
         CreateNewTab();
         LoadRecentFiles();
+        InitializeFileTree();
+        // Wire up TreeView events (use FindName to avoid relying on generated field)
+        var tv = FindName("FileTreeView") as TreeView;
+        if (tv != null)
+        {
+            tv.SelectedItemChanged += FileTreeView_SelectedItemChanged;
+            tv.MouseDoubleClick += FileTreeView_MouseDoubleClick;
+        }
+        // Ensure scope menu items reflect initial state
+        var sel = FindName("SelectedTabScopeMenuItem") as MenuItem;
+        var all = FindName("AllTabsScopeMenuItem") as MenuItem;
+        if (sel != null) sel.IsChecked = !_searchInAllTabs;
+        if (all != null) all.IsChecked = _searchInAllTabs;
     }
+
+    private TreeView? FileTree => FindName("FileTreeView") as TreeView;
 
     private TabDocument? CurrentDocument => TabContainer.SelectedItem as TabDocument;
 
@@ -345,100 +389,212 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void FindText(bool forward)
     {
-        if (CurrentDocument == null || string.IsNullOrEmpty(SearchTextBox.Text)) return;
+        if (string.IsNullOrEmpty(SearchTextBox.Text)) return;
 
-        var editor = GetCurrentEditor();
-        if (editor == null) return;
-
-        int startIndex;
-        int index;
-
-        if (forward)
+        if (!_searchInAllTabs)
         {
-            startIndex = editor.SelectionStart + editor.SelectionLength;
-            index = CurrentDocument.Content.IndexOf(SearchTextBox.Text, startIndex, StringComparison.OrdinalIgnoreCase);
+            if (CurrentDocument == null) return;
+            var editor = GetCurrentEditor();
+            if (editor == null) return;
 
-            if (index == -1)
+            int startIndex;
+            int index;
+
+            if (forward)
             {
-                index = CurrentDocument.Content.IndexOf(SearchTextBox.Text, 0, StringComparison.OrdinalIgnoreCase);
+                startIndex = editor.SelectionStart + editor.SelectionLength;
+                index = CurrentDocument.Content.IndexOf(SearchTextBox.Text, startIndex, StringComparison.OrdinalIgnoreCase);
+
+                if (index == -1)
+                {
+                    index = CurrentDocument.Content.IndexOf(SearchTextBox.Text, 0, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+            else
+            {
+                startIndex = Math.Max(0, editor.SelectionStart - 1);
+                index = CurrentDocument.Content.LastIndexOf(SearchTextBox.Text, startIndex, StringComparison.OrdinalIgnoreCase);
+
+                if (index == -1)
+                {
+                    index = CurrentDocument.Content.LastIndexOf(SearchTextBox.Text, CurrentDocument.Content.Length - 1, StringComparison.OrdinalIgnoreCase);
+                }
+            }
+
+            if (index >= 0)
+            {
+                editor.Select(index, SearchTextBox.Text.Length);
+                editor.Focus();
+                StatusText.Text = "Match found";
+            }
+            else
+            {
+                StatusText.Text = "No matches found";
             }
         }
         else
         {
-            startIndex = Math.Max(0, editor.SelectionStart - 1);
-            index = CurrentDocument.Content.LastIndexOf(SearchTextBox.Text, startIndex, StringComparison.OrdinalIgnoreCase);
+            // Search across all open documents. Start from current document index + direction.
+            if (Documents.Count == 0 || string.IsNullOrEmpty(SearchTextBox.Text)) return;
 
-            if (index == -1)
+            int startDocIndex = CurrentDocument != null ? Documents.IndexOf(CurrentDocument) : 0;
+            int docs = Documents.Count;
+
+            for (int offset = 0; offset < docs; offset++)
             {
-                index = CurrentDocument.Content.LastIndexOf(SearchTextBox.Text, CurrentDocument.Content.Length - 1, StringComparison.OrdinalIgnoreCase);
+                int idx = forward ? (startDocIndex + offset) % docs : (startDocIndex - offset + docs) % docs;
+                var doc = Documents[idx];
+                int found = forward ? doc.Content.IndexOf(SearchTextBox.Text, StringComparison.OrdinalIgnoreCase)
+                                     : doc.Content.LastIndexOf(SearchTextBox.Text, StringComparison.OrdinalIgnoreCase);
+                if (found >= 0)
+                {
+                    TabContainer.SelectedItem = doc;
+                    // Give UI time to update selection
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        var ed = GetEditorForDocument(doc);
+                        if (ed != null)
+                        {
+                            ed.Select(found, SearchTextBox.Text.Length);
+                            ed.Focus();
+                        }
+                    });
+                    StatusText.Text = "Match found";
+                    return;
+                }
             }
-        }
 
-        if (index >= 0)
-        {
-            editor.Select(index, SearchTextBox.Text.Length);
-            editor.Focus();
-            StatusText.Text = "Match found";
-        }
-        else
-        {
             StatusText.Text = "No matches found";
         }
     }
 
     private void CountMatches_Click(object sender, RoutedEventArgs e)
     {
-        if (CurrentDocument == null || string.IsNullOrEmpty(SearchTextBox.Text)) return;
+        if (string.IsNullOrEmpty(SearchTextBox.Text)) return;
 
-        int count = 0;
-        int index = 0;
-        while ((index = CurrentDocument.Content.IndexOf(SearchTextBox.Text, index, StringComparison.OrdinalIgnoreCase)) != -1)
+        if (!_searchInAllTabs)
         {
-            count++;
-            index += SearchTextBox.Text.Length;
-        }
+            if (CurrentDocument == null) return;
 
-        StatusText.Text = $"{count} matches found";
-        MessageBox.Show($"Found {count} occurrences of \"{SearchTextBox.Text}\"", "Count", MessageBoxButton.OK, MessageBoxImage.Information);
+            int count = 0;
+            int index = 0;
+            while ((index = CurrentDocument.Content.IndexOf(SearchTextBox.Text, index, StringComparison.OrdinalIgnoreCase)) != -1)
+            {
+                count++;
+                index += SearchTextBox.Text.Length;
+            }
+
+            StatusText.Text = $"{count} matches found";
+            MessageBox.Show($"Found {count} occurrences of \"{SearchTextBox.Text}\" in current tab", "Count", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        else
+        {
+            int total = 0;
+            foreach (var doc in Documents)
+            {
+                int count = 0;
+                int index = 0;
+                while ((index = doc.Content.IndexOf(SearchTextBox.Text, index, StringComparison.OrdinalIgnoreCase)) != -1)
+                {
+                    count++;
+                    index += SearchTextBox.Text.Length;
+                }
+                total += count;
+            }
+
+            StatusText.Text = $"{total} matches found in all tabs";
+            MessageBox.Show($"Found {total} occurrences of \"{SearchTextBox.Text}\" in all open tabs", "Count", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
     }
 
     private void Replace_Click(object sender, RoutedEventArgs e)
     {
-        if (CurrentDocument == null || string.IsNullOrEmpty(SearchTextBox.Text)) return;
+        if (string.IsNullOrEmpty(SearchTextBox.Text)) return;
 
-        var editor = GetCurrentEditor();
-        if (editor == null) return;
-
-        if (editor.SelectedText.Equals(SearchTextBox.Text, StringComparison.OrdinalIgnoreCase))
+        if (!_searchInAllTabs)
         {
-            int start = editor.SelectionStart;
-            CurrentDocument.Content = CurrentDocument.Content.Remove(start, SearchTextBox.Text.Length)
-                .Insert(start, ReplaceTextBox.Text);
-            editor.Select(start, ReplaceTextBox.Text.Length);
-            StatusText.Text = "Replaced";
+            if (CurrentDocument == null) return;
+
+            var editor = GetCurrentEditor();
+            if (editor == null) return;
+
+            if (editor.SelectedText.Equals(SearchTextBox.Text, StringComparison.OrdinalIgnoreCase))
+            {
+                int start = editor.SelectionStart;
+                CurrentDocument.Content = CurrentDocument.Content.Remove(start, SearchTextBox.Text.Length)
+                    .Insert(start, ReplaceTextBox.Text);
+                editor.Select(start, ReplaceTextBox.Text.Length);
+                StatusText.Text = "Replaced";
+            }
+
+            FindText(forward: true);
         }
-        
-        FindText(forward: true);
+        else
+        {
+            // For all-tabs mode: find next occurrence across tabs, then replace it
+            FindText(forward: true);
+            Dispatcher.InvokeAsync(() =>
+            {
+                var ed = GetCurrentEditor();
+                if (ed != null && ed.SelectedText.Equals(SearchTextBox.Text, StringComparison.OrdinalIgnoreCase) && CurrentDocument != null)
+                {
+                    int start = ed.SelectionStart;
+                    CurrentDocument.Content = CurrentDocument.Content.Remove(start, SearchTextBox.Text.Length)
+                        .Insert(start, ReplaceTextBox.Text);
+                    ed.Select(start, ReplaceTextBox.Text.Length);
+                    StatusText.Text = "Replaced";
+                }
+            });
+        }
     }
 
     private void ReplaceAll_Click(object sender, RoutedEventArgs e)
     {
-        if (CurrentDocument == null || string.IsNullOrEmpty(SearchTextBox.Text)) return;
+        if (string.IsNullOrEmpty(SearchTextBox.Text)) return;
 
-        int count = 0;
-        string content = CurrentDocument.Content;
-        int index = 0;
-        
-        while ((index = content.IndexOf(SearchTextBox.Text, index, StringComparison.OrdinalIgnoreCase)) != -1)
+        if (!_searchInAllTabs)
         {
-            content = content.Remove(index, SearchTextBox.Text.Length).Insert(index, ReplaceTextBox.Text);
-            index += ReplaceTextBox.Text.Length;
-            count++;
-        }
+            if (CurrentDocument == null) return;
 
-        CurrentDocument.Content = content;
-        StatusText.Text = $"Replaced {count} occurrences";
-        MessageBox.Show($"Replaced {count} occurrences", "Replace All", MessageBoxButton.OK, MessageBoxImage.Information);
+            int count = 0;
+            string content = CurrentDocument.Content;
+            int index = 0;
+            
+            while ((index = content.IndexOf(SearchTextBox.Text, index, StringComparison.OrdinalIgnoreCase)) != -1)
+            {
+                content = content.Remove(index, SearchTextBox.Text.Length).Insert(index, ReplaceTextBox.Text);
+                index += ReplaceTextBox.Text.Length;
+                count++;
+            }
+
+            CurrentDocument.Content = content;
+            StatusText.Text = $"Replaced {count} occurrences";
+            MessageBox.Show($"Replaced {count} occurrences in current tab", "Replace All", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        else
+        {
+            int total = 0;
+            foreach (var doc in Documents.ToList())
+            {
+                int count = 0;
+                string content = doc.Content;
+                int index = 0;
+                while ((index = content.IndexOf(SearchTextBox.Text, index, StringComparison.OrdinalIgnoreCase)) != -1)
+                {
+                    content = content.Remove(index, SearchTextBox.Text.Length).Insert(index, ReplaceTextBox.Text);
+                    index += ReplaceTextBox.Text.Length;
+                    count++;
+                }
+                if (count > 0)
+                {
+                    doc.Content = content;
+                    total += count;
+                }
+            }
+
+            StatusText.Text = $"Replaced {total} occurrences in all tabs";
+            MessageBox.Show($"Replaced {total} occurrences in all open tabs", "Replace All", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
     }
 
     private void CloseSearch_Click(object sender, RoutedEventArgs e)
@@ -600,6 +756,328 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 return childResult;
         }
         return null;
+    }
+
+    // ------------------ File tree initialization and handlers ------------------
+    private void InitializeFileTree()
+    {
+        try
+        {
+            var tree = FileTree;
+            tree?.Items.Clear();
+
+            // Show the user's Desktop as the root in the file explorer
+            var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+            if (Directory.Exists(desktopPath))
+            {
+                var desktopItem = CreateDirectoryNode(desktopPath, "Desktop");
+                tree?.Items.Add(desktopItem);
+                // Expand desktop by default and load children
+                desktopItem.IsExpanded = true;
+                try { DirectoryItem_Expanded(desktopItem, null); } catch { }
+            }
+        }
+        catch { }
+    }
+
+    private TreeViewItem CreateDirectoryNode(string path, string? displayName = null)
+    {
+        var header = displayName ?? Path.GetFileName(path) ?? path;
+        var item = new TreeViewItem { Header = header, Tag = path };
+
+        // Add a dummy child so the expand arrow shows (lazy loading)
+        item.Items.Add(null!);
+        item.Expanded += DirectoryItem_Expanded;
+
+        // Set context menu for directories
+        CreateContextMenuForDirectory(item, path);
+
+        return item;
+    }
+
+    private void DirectoryItem_Expanded(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not TreeViewItem item) return;
+
+        if (item.Items.Count == 1 && item.Items[0] == null)
+        {
+            item.Items.Clear();
+            string? path = item.Tag as string;
+            if (path == null) return;
+            try
+            {
+                // Add directories
+                foreach (var dir in Directory.GetDirectories(path))
+                {
+                    try
+                    {
+                        var di = new DirectoryInfo(dir);
+                        var child = CreateDirectoryNode(dir, di.Name);
+                        item.Items.Add(child);
+                    }
+                    catch { }
+                }
+
+                // Add files
+                foreach (var file in Directory.GetFiles(path))
+                {
+                    try
+                    {
+                        var fn = Path.GetFileName(file);
+                        var fileItem = new TreeViewItem { Header = fn, Tag = file };
+                        item.Items.Add(fileItem);
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+    }
+
+    private void FileTreeView_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is TreeView tv && tv.SelectedItem is TreeViewItem selected && selected.Tag is string path)
+        {
+            if (File.Exists(path))
+            {
+                OpenFile(path);
+            }
+        }
+    }
+
+    private void FileTreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
+    {
+        // Update availability of Paste in context menus when selection changes
+        // When context menus are created they read _copiedFolderTempPath; nothing to do here for now
+    }
+    // Toolbar button handlers
+    private void Undo_Click(object sender, RoutedEventArgs e)
+    {
+        var editor = GetCurrentEditor();
+        if (editor == null) return;
+        try
+        {
+            editor.Focus();
+            if (editor.CanUndo) editor.Undo();
+            StatusText.Text = "Undone";
+        }
+        catch { }
+    }
+
+    private void Redo_Click(object sender, RoutedEventArgs e)
+    {
+        var editor = GetCurrentEditor();
+        if (editor == null) return;
+        try
+        {
+            // ensure editor has focus then attempt Redo
+            editor.Focus();
+            editor.Redo();
+            StatusText.Text = "Redone";
+        }
+        catch { }
+    }
+
+    
+
+    private void CreateContextMenuForDirectory(TreeViewItem dirItem, string path)
+    {
+        var menu = new ContextMenu();
+
+        var newFile = new MenuItem { Header = "New file" };
+        newFile.Click += (s, e) => NewFile_Click(path, dirItem);
+        menu.Items.Add(newFile);
+
+        var copyPath = new MenuItem { Header = "Copy path" };
+        copyPath.Click += (s, e) => CopyPath_Click(path);
+        menu.Items.Add(copyPath);
+
+        var copyFolder = new MenuItem { Header = "Copy folder" };
+        copyFolder.Click += (s, e) => CopyFolder_Click(path);
+        menu.Items.Add(copyFolder);
+
+        var pasteFolder = new MenuItem { Header = "Paste folder" };
+        pasteFolder.Click += (s, e) => PasteFolder_Click(path, dirItem);
+        pasteFolder.IsEnabled = _copiedFolderTempPath != null;
+        menu.Opened += (s, e) => { pasteFolder.IsEnabled = _copiedFolderTempPath != null; };
+        menu.Items.Add(pasteFolder);
+
+        dirItem.ContextMenu = menu;
+    }
+
+    private void ScopeMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem mi) return;
+        var sel = FindName("SelectedTabScopeMenuItem") as MenuItem;
+        var all = FindName("AllTabsScopeMenuItem") as MenuItem;
+
+        if (mi == sel)
+        {
+            _searchInAllTabs = false;
+        }
+        else if (mi == all)
+        {
+            _searchInAllTabs = true;
+        }
+
+        if (sel != null) sel.IsChecked = !_searchInAllTabs;
+        if (all != null) all.IsChecked = _searchInAllTabs;
+    }
+
+    private void CloseAllTabs_Click(object sender, RoutedEventArgs e)
+    {
+        foreach (var doc in Documents.ToList())
+        {
+            if (doc.IsModified)
+            {
+                TabContainer.SelectedItem = doc;
+                var result = MessageBox.Show($"Save changes to {doc.Title}?", "Notepad++ WPF",
+                    MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+
+                switch (result)
+                {
+                    case MessageBoxResult.Yes:
+                        Save_Click(this, new RoutedEventArgs());
+                        break;
+                    case MessageBoxResult.Cancel:
+                        return; // abort closing all
+                    case MessageBoxResult.No:
+                    default:
+                        break;
+                }
+            }
+
+            Documents.Remove(doc);
+        }
+
+        if (Documents.Count == 0)
+            CreateNewTab();
+    }
+
+    private void NewFile_Click(string dirPath, TreeViewItem dirItem)
+    {
+        try
+        {
+            // Create unique file name
+            string baseName = "NewFile";
+            string ext = ".txt";
+            string target;
+            int idx = 0;
+            do
+            {
+                string name = idx == 0 ? baseName + ext : baseName + idx + ext;
+                target = Path.Combine(dirPath, name);
+                idx++;
+            } while (File.Exists(target));
+
+            File.WriteAllText(target, string.Empty);
+
+            // If directory expanded, add new item; otherwise ensure next expand will show it
+            if (dirItem.IsExpanded)
+            {
+                var fileItem = new TreeViewItem { Header = Path.GetFileName(target), Tag = target };
+                dirItem.Items.Add(fileItem);
+            }
+            else
+            {
+                // leave the dummy; when expanded, the file will appear
+            }
+
+            // Optionally open the new file
+            OpenFile(target);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error creating file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void CopyPath_Click(string path)
+    {
+        try
+        {
+            Clipboard.SetText(path);
+            StatusText.Text = "Path copied to clipboard";
+        }
+        catch { }
+    }
+
+    private void CopyFolder_Click(string path)
+    {
+        try
+        {
+            // Create a temporary folder copy
+            var tempRoot = Path.Combine(Path.GetTempPath(), "NotepadWPF_CopiedFolders");
+            Directory.CreateDirectory(tempRoot);
+            var guid = Guid.NewGuid().ToString("N");
+            var dest = Path.Combine(tempRoot, guid);
+            DirectoryCopy(path, dest, copySubDirs: true);
+            _copiedFolderTempPath = dest;
+            _copiedFolderOriginalName = new DirectoryInfo(path).Name;
+            StatusText.Text = "Folder copied to temporary clipboard";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error copying folder: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void PasteFolder_Click(string targetDirPath, TreeViewItem targetDirItem)
+    {
+        if (string.IsNullOrEmpty(_copiedFolderTempPath) || !Directory.Exists(_copiedFolderTempPath)) return;
+
+        try
+        {
+            var name = _copiedFolderOriginalName ?? Path.GetFileName(_copiedFolderTempPath);
+            string destPath = Path.Combine(targetDirPath, name);
+            int idx = 1;
+            while (Directory.Exists(destPath))
+            {
+                destPath = Path.Combine(targetDirPath, name + " (" + idx + ")");
+                idx++;
+            }
+
+            DirectoryCopy(_copiedFolderTempPath, destPath, copySubDirs: true);
+
+            // If target expanded, add new node
+            if (targetDirItem.IsExpanded)
+            {
+                var newNode = CreateDirectoryNode(destPath, Path.GetFileName(destPath));
+                targetDirItem.Items.Add(newNode);
+            }
+
+            StatusText.Text = "Folder pasted";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Error pasting folder: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs)
+    {
+        // Create dest directory
+        var dir = new DirectoryInfo(sourceDirName);
+        if (!dir.Exists) throw new DirectoryNotFoundException("Source directory does not exist: " + sourceDirName);
+
+        Directory.CreateDirectory(destDirName);
+
+        // Copy files
+        foreach (var file in dir.GetFiles())
+        {
+            string temppath = Path.Combine(destDirName, file.Name);
+            file.CopyTo(temppath, overwrite: true);
+        }
+
+        // Copy subdirectories
+        if (copySubDirs)
+        {
+            foreach (var subdir in dir.GetDirectories())
+            {
+                string temppath = Path.Combine(destDirName, subdir.Name);
+                DirectoryCopy(subdir.FullName, temppath, copySubDirs);
+            }
+        }
     }
 
     private void LoadRecentFiles()
