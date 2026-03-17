@@ -14,12 +14,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 {
     public ObservableCollection<TabDocument> Documents { get; } = [];
     private List<string> _recentFiles = [];
-    private const int MaxRecentFiles = 10;
-    // For copy/paste folder operations
     private string? _copiedFolderTempPath = null;
     private string? _copiedFolderOriginalName = null;
-    // Search/replace scope: when true, operations apply to all open tabs
     private bool _searchInAllTabs = false;
+    private FileManager? _fileManager;
     
     private double _editorFontSize = 14;
     public double EditorFontSize
@@ -65,29 +63,40 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public MainWindow()
     {
         InitializeComponent();
-        // create viewmodel and pass existing documents and actions to reuse code-behind logic
         _viewModel = new ViewModels.MainViewModel(Documents,
-            newAction: () => CreateNewTab(),
-            openAction: () => Open_Click(this, new RoutedEventArgs()),
-            saveAction: () => Save_Click(this, new RoutedEventArgs()),
-            saveAllAction: () => SaveAll_Click(this, new RoutedEventArgs()),
-            closeAction: () => CloseTab_Click(this, new RoutedEventArgs())
+            newAction: () => _fileManager?.CreateNewTab(),
+            openAction: () => _fileManager?.OpenFileDialog(),
+            saveAction: () => _fileManager?.SaveCurrentDocument(),
+            saveAllAction: () => _fileManager?.SaveAll(),
+            closeAction: () => _fileManager?.CloseCurrentDocument()
         );
-
         DataContext = _viewModel;
         TabContainer.ItemsSource = _viewModel.Documents;
 
-        CreateNewTab();
-        LoadRecentFiles();
+        _fileManager = new FileManager(
+            Documents,
+            _recentFiles,
+            doc => TabContainer.SelectedItem = doc,
+            () => UpdateStatusBar(),
+            () => _fileManager?.UpdateRecentFilesMenu(),
+            () => _fileManager?.CreateNewTab(),
+            filePath => _fileManager?.OpenFile(filePath),
+            path => _fileManager?.SaveFile(path),
+            () => CurrentDocument,
+            FindName("RecentFilesMenu") as MenuItem
+        );
+
+        _fileManager?.CreateNewTab();
+        _fileManager?.LoadRecentFiles();
         InitializeFileTree();
-        // Wire up TreeView events (use FindName to avoid relying on generated field)
+
         var tv = FindName("FileTreeView") as TreeView;
         if (tv != null)
         {
             tv.SelectedItemChanged += FileTreeView_SelectedItemChanged;
             tv.MouseDoubleClick += FileTreeView_MouseDoubleClick;
         }
-        // Ensure scope menu items reflect initial state
+
         var sel = FindName("SelectedTabScopeMenuItem") as MenuItem;
         var all = FindName("AllTabsScopeMenuItem") as MenuItem;
         if (sel != null) sel.IsChecked = !_searchInAllTabs;
@@ -98,147 +107,47 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private TabDocument? CurrentDocument => TabContainer.SelectedItem as TabDocument;
 
-    private void CreateNewTab(string? filePath = null, string content = "")
-    {
-        var doc = new TabDocument
-        {
-            FilePath = filePath,
-            Content = content,
-            Title = filePath != null ? Path.GetFileName(filePath) : "Untitled",
-            IsModified = false
-        };
-        Documents.Add(doc);
-        TabContainer.SelectedItem = doc;
-        UpdateStatusBar();
-    }
 
     private void New_Click(object sender, RoutedEventArgs e)
     {
-        CreateNewTab();
+        _fileManager?.CreateNewTab();
     }
 
     private void Open_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog
-        {
-            Filter = "Text Files (*.txt)|*.txt|C# Files (*.cs)|*.cs|XML Files (*.xml)|*.xml|JSON Files (*.json)|*.json|All Files (*.*)|*.*"
-        };
-
-        if (dialog.ShowDialog() == true)
-        {
-            OpenFile(dialog.FileName);
-        }
+        _fileManager?.OpenFileDialog();
     }
 
-    private void OpenFile(string filePath)
-    {
-        try
-        {
-            string content = File.ReadAllText(filePath);
-            CreateNewTab(filePath, content);
-            AddToRecentFiles(filePath);
-            StatusText.Text = $"Opened: {Path.GetFileName(filePath)}";
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Error opening file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-    }
 
     private void Save_Click(object sender, RoutedEventArgs e)
     {
-        if (CurrentDocument == null) return;
-
-        if (string.IsNullOrEmpty(CurrentDocument.FilePath))
-            SaveAs_Click(sender, e);
-        else
-            SaveFile(CurrentDocument.FilePath);
+        _fileManager?.SaveCurrentDocument();
     }
 
     private void SaveAs_Click(object sender, RoutedEventArgs e)
     {
-        if (CurrentDocument == null) return;
-
-        var dialog = new SaveFileDialog
-        {
-            Filter = "Text Files (*.txt)|*.txt|C# Files (*.cs)|*.cs|XML Files (*.xml)|*.xml|JSON Files (*.json)|*.json|All Files (*.*)|*.*"
-        };
-
-        if (dialog.ShowDialog() == true)
-        {
-            SaveFile(dialog.FileName);
-            CurrentDocument.FilePath = dialog.FileName;
-            CurrentDocument.Title = Path.GetFileName(dialog.FileName);
-            AddToRecentFiles(dialog.FileName);
-        }
+        _fileManager?.SaveAsCurrentDocument();
     }
 
     private void SaveAll_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var doc in Documents)
-        {
-            if (doc.IsModified)
-            {
-                TabContainer.SelectedItem = doc;
-                Save_Click(sender, e);
-            }
-        }
-        StatusText.Text = "All files saved";
+        _fileManager?.SaveAll();
     }
 
-    private void SaveFile(string path)
-    {
-        if (CurrentDocument == null) return;
-
-        try
-        {
-            File.WriteAllText(path, CurrentDocument.Content, Encoding.UTF8);
-            CurrentDocument.IsModified = false;
-            StatusText.Text = $"Saved: {Path.GetFileName(path)}";
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Error saving file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
-    }
 
     private void CloseTab_Click(object sender, RoutedEventArgs e)
     {
-        if (CurrentDocument == null) return;
-        CloseDocument(CurrentDocument);
+        _fileManager?.CloseCurrentDocument();
     }
 
     private void CloseTabButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button button && button.Tag is TabDocument doc)
         {
-            CloseDocument(doc);
+            _fileManager?.CloseDocument(doc);
         }
     }
 
-    private void CloseDocument(TabDocument doc)
-    {
-        if (doc.IsModified)
-        {
-            var result = MessageBox.Show($"Save changes to {doc.Title}?", "Notepad++ WPF",
-                MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
-
-            switch (result)
-            {
-                case MessageBoxResult.Yes:
-                    TabContainer.SelectedItem = doc;
-                    Save_Click(this, new RoutedEventArgs());
-                    break;
-                case MessageBoxResult.Cancel:
-                    return;
-            }
-        }
-
-        Documents.Remove(doc);
-
-        if (Documents.Count == 0)
-            CreateNewTab();
-    }
 
     private void Exit_Click(object sender, RoutedEventArgs e)
     {
@@ -327,12 +236,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void AddTab_Click(object sender, RoutedEventArgs e)
     {
-        CreateNewTab();
+        _fileManager?.CreateNewTab();
     }
 
     private void New_Executed(object sender, ExecutedRoutedEventArgs e)
     {
-        CreateNewTab();
+        _fileManager?.CreateNewTab();
     }
 
     private void Open_Executed(object sender, ExecutedRoutedEventArgs e)
@@ -391,7 +300,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (string.IsNullOrEmpty(SearchTextBox.Text)) return;
 
-        if (!_searchInAllTabs)
+        bool searchAllTabs = _searchInAllTabs;
+        if (_searchInAllTabs)
+        {
+            var result = MessageBox.Show(
+                "Do you want to search in all open files?",
+                "Search Scope",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (result == MessageBoxResult.No)
+                searchAllTabs = false;
+        }
+        if (!searchAllTabs)
         {
             if (CurrentDocument == null) return;
             var editor = GetCurrentEditor();
@@ -434,7 +354,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         else
         {
-            // Search across all open documents. Start from current document index + direction.
             if (Documents.Count == 0 || string.IsNullOrEmpty(SearchTextBox.Text)) return;
 
             int startDocIndex = CurrentDocument != null ? Documents.IndexOf(CurrentDocument) : 0;
@@ -449,7 +368,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 if (found >= 0)
                 {
                     TabContainer.SelectedItem = doc;
-                    // Give UI time to update selection
                     Dispatcher.InvokeAsync(() =>
                     {
                         var ed = GetEditorForDocument(doc);
@@ -472,7 +390,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (string.IsNullOrEmpty(SearchTextBox.Text)) return;
 
-        if (!_searchInAllTabs)
+        bool searchAllTabs = _searchInAllTabs;
+        if (_searchInAllTabs)
+        {
+            var result = MessageBox.Show(
+                "Do you want to count matches in all open files?",
+                "Count Scope",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (result == MessageBoxResult.No)
+                searchAllTabs = false;
+        }
+        if (!searchAllTabs)
         {
             if (CurrentDocument == null) return;
 
@@ -511,7 +440,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (string.IsNullOrEmpty(SearchTextBox.Text)) return;
 
-        if (!_searchInAllTabs)
+        bool searchAllTabs = _searchInAllTabs;
+        if (_searchInAllTabs)
+        {
+            var result = MessageBox.Show(
+                "Do you want to replace in all open files?",
+                "Replace Scope",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (result == MessageBoxResult.No)
+                searchAllTabs = false;
+        }
+        if (!searchAllTabs)
         {
             if (CurrentDocument == null) return;
 
@@ -531,7 +471,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
         else
         {
-            // For all-tabs mode: find next occurrence across tabs, then replace it
             FindText(forward: true);
             Dispatcher.InvokeAsync(() =>
             {
@@ -552,7 +491,18 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         if (string.IsNullOrEmpty(SearchTextBox.Text)) return;
 
-        if (!_searchInAllTabs)
+        bool searchAllTabs = _searchInAllTabs;
+        if (_searchInAllTabs)
+        {
+            var result = MessageBox.Show(
+                "Do you want to replace all in all open files?",
+                "Replace All Scope",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (result == MessageBoxResult.No)
+                searchAllTabs = false;
+        }
+        if (!searchAllTabs)
         {
             if (CurrentDocument == null) return;
 
@@ -681,14 +631,34 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void WordWrap_Click(object sender, RoutedEventArgs e)
     {
-        WordWrapMode = WordWrapMenuItem.IsChecked ? TextWrapping.Wrap : TextWrapping.NoWrap;
-        StatusText.Text = WordWrapMenuItem.IsChecked ? "Word wrap enabled" : "Word wrap disabled";
+        bool enabled;
+        if (sender is MenuItem mi)
+        {
+            enabled = mi.IsChecked;
+        }
+        else
+        {
+            var mi2 = FindName("WordWrapMenuItem") as MenuItem;
+            enabled = mi2?.IsChecked ?? (WordWrapMode == TextWrapping.Wrap);
+        }
+
+        WordWrapMode = enabled ? TextWrapping.Wrap : TextWrapping.NoWrap;
+        StatusText.Text = enabled ? "Word wrap enabled" : "Word wrap disabled";
     }
 
     private void WordWrap_Executed(object sender, ExecutedRoutedEventArgs e)
     {
-        WordWrapMenuItem.IsChecked = !WordWrapMenuItem.IsChecked;
-        WordWrap_Click(sender, e);
+        var mi = FindName("WordWrapMenuItem") as MenuItem;
+        if (mi != null)
+        {
+            mi.IsChecked = !mi.IsChecked;
+            WordWrap_Click(mi, e);
+        }
+        else
+        {
+            WordWrapMode = WordWrapMode == TextWrapping.NoWrap ? TextWrapping.Wrap : TextWrapping.NoWrap;
+            StatusText.Text = WordWrapMode == TextWrapping.Wrap ? "Word wrap enabled" : "Word wrap disabled";
+        }
     }
 
     private void DeleteLine_Click(object sender, RoutedEventArgs e)
@@ -702,7 +672,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         int lineLength = editor.GetLineLength(lineIndex);
         
         if (lineStart + lineLength < CurrentDocument.Content.Length)
-            lineLength++; // Include newline
+            lineLength++;
 
         CurrentDocument.Content = CurrentDocument.Content.Remove(lineStart, lineLength);
         editor.CaretIndex = Math.Min(lineStart, CurrentDocument.Content.Length);
@@ -727,6 +697,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
         CurrentDocument.Content = CurrentDocument.Content.Insert(insertPos, line + "\n");
         StatusText.Text = "Line duplicated";
+    }
+
+    private void FolderExplorerMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuItem mi)
+        {
+            var border = FindName("FileExplorerBorder") as Border;
+            if (border != null)
+                border.Visibility = mi.IsChecked ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     private TextBox? GetCurrentEditor()
@@ -758,7 +738,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         return null;
     }
 
-    // ------------------ File tree initialization and handlers ------------------
+    
     private void InitializeFileTree()
     {
         try
@@ -766,13 +746,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             var tree = FileTree;
             tree?.Items.Clear();
 
-            // Show the user's Desktop as the root in the file explorer
             var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
             if (Directory.Exists(desktopPath))
             {
                 var desktopItem = CreateDirectoryNode(desktopPath, "Desktop");
                 tree?.Items.Add(desktopItem);
-                // Expand desktop by default and load children
                 desktopItem.IsExpanded = true;
                 try { DirectoryItem_Expanded(desktopItem, null); } catch { }
             }
@@ -785,11 +763,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var header = displayName ?? Path.GetFileName(path) ?? path;
         var item = new TreeViewItem { Header = header, Tag = path };
 
-        // Add a dummy child so the expand arrow shows (lazy loading)
+        
         item.Items.Add(null!);
         item.Expanded += DirectoryItem_Expanded;
 
-        // Set context menu for directories
+        
         CreateContextMenuForDirectory(item, path);
 
         return item;
@@ -806,7 +784,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             if (path == null) return;
             try
             {
-                // Add directories
                 foreach (var dir in Directory.GetDirectories(path))
                 {
                     try
@@ -818,7 +795,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     catch { }
                 }
 
-                // Add files
                 foreach (var file in Directory.GetFiles(path))
                 {
                     try
@@ -840,17 +816,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             if (File.Exists(path))
             {
-                OpenFile(path);
+                _fileManager?.OpenFile(path);
             }
         }
     }
 
     private void FileTreeView_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
-        // Update availability of Paste in context menus when selection changes
-        // When context menus are created they read _copiedFolderTempPath; nothing to do here for now
+        
     }
-    // Toolbar button handlers
+    
     private void Undo_Click(object sender, RoutedEventArgs e)
     {
         var editor = GetCurrentEditor();
@@ -870,7 +845,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (editor == null) return;
         try
         {
-            // ensure editor has focus then attempt Redo
+            
             editor.Focus();
             editor.Redo();
             StatusText.Text = "Redone";
@@ -926,39 +901,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void CloseAllTabs_Click(object sender, RoutedEventArgs e)
     {
-        foreach (var doc in Documents.ToList())
-        {
-            if (doc.IsModified)
-            {
-                TabContainer.SelectedItem = doc;
-                var result = MessageBox.Show($"Save changes to {doc.Title}?", "Notepad++ WPF",
-                    MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
-
-                switch (result)
-                {
-                    case MessageBoxResult.Yes:
-                        Save_Click(this, new RoutedEventArgs());
-                        break;
-                    case MessageBoxResult.Cancel:
-                        return; // abort closing all
-                    case MessageBoxResult.No:
-                    default:
-                        break;
-                }
-            }
-
-            Documents.Remove(doc);
-        }
-
-        if (Documents.Count == 0)
-            CreateNewTab();
+        _fileManager?.CloseAllTabs();
     }
 
     private void NewFile_Click(string dirPath, TreeViewItem dirItem)
     {
         try
         {
-            // Create unique file name
             string baseName = "NewFile";
             string ext = ".txt";
             string target;
@@ -972,19 +921,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             File.WriteAllText(target, string.Empty);
 
-            // If directory expanded, add new item; otherwise ensure next expand will show it
             if (dirItem.IsExpanded)
             {
                 var fileItem = new TreeViewItem { Header = Path.GetFileName(target), Tag = target };
                 dirItem.Items.Add(fileItem);
             }
-            else
-            {
-                // leave the dummy; when expanded, the file will appear
-            }
 
-            // Optionally open the new file
-            OpenFile(target);
+            _fileManager?.OpenFile(target);
         }
         catch (Exception ex)
         {
@@ -1006,7 +949,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         try
         {
-            // Create a temporary folder copy
+            
             var tempRoot = Path.Combine(Path.GetTempPath(), "NotepadWPF_CopiedFolders");
             Directory.CreateDirectory(tempRoot);
             var guid = Guid.NewGuid().ToString("N");
@@ -1039,7 +982,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
             DirectoryCopy(_copiedFolderTempPath, destPath, copySubDirs: true);
 
-            // If target expanded, add new node
+            
             if (targetDirItem.IsExpanded)
             {
                 var newNode = CreateDirectoryNode(destPath, Path.GetFileName(destPath));
@@ -1056,20 +999,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void DirectoryCopy(string sourceDirName, string destDirName, bool copySubDirs)
     {
-        // Create dest directory
+        
         var dir = new DirectoryInfo(sourceDirName);
         if (!dir.Exists) throw new DirectoryNotFoundException("Source directory does not exist: " + sourceDirName);
 
         Directory.CreateDirectory(destDirName);
 
-        // Copy files
+        
         foreach (var file in dir.GetFiles())
         {
             string temppath = Path.Combine(destDirName, file.Name);
             file.CopyTo(temppath, overwrite: true);
         }
 
-        // Copy subdirectories
+        
         if (copySubDirs)
         {
             foreach (var subdir in dir.GetDirectories())
@@ -1080,95 +1023,6 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private void LoadRecentFiles()
-    {
-        try
-        {
-            string recentFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "NotepadPlusPlusWPF", "recent.txt");
-            if (File.Exists(recentFilePath))
-            {
-                _recentFiles = File.ReadAllLines(recentFilePath).Where(File.Exists).Take(MaxRecentFiles).ToList();
-            }
-        }
-        catch { }
-        
-        UpdateRecentFilesMenu();
-    }
-
-    private void SaveRecentFiles()
-    {
-        try
-        {
-            string folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "NotepadPlusPlusWPF");
-            Directory.CreateDirectory(folder);
-            File.WriteAllLines(Path.Combine(folder, "recent.txt"), _recentFiles);
-        }
-        catch { }
-    }
-
-    private void AddToRecentFiles(string filePath)
-    {
-        _recentFiles.Remove(filePath);
-        _recentFiles.Insert(0, filePath);
-        if (_recentFiles.Count > MaxRecentFiles)
-            _recentFiles.RemoveAt(_recentFiles.Count - 1);
-        
-        SaveRecentFiles();
-        UpdateRecentFilesMenu();
-    }
-
-    private void UpdateRecentFilesMenu()
-    {
-        RecentFilesMenu.Items.Clear();
-        
-        if (_recentFiles.Count == 0)
-        {
-            var emptyItem = new MenuItem { Header = "(Empty)", IsEnabled = false };
-            RecentFilesMenu.Items.Add(emptyItem);
-        }
-        else
-        {
-            foreach (var file in _recentFiles)
-            {
-                var menuItem = new MenuItem
-                {
-                    Header = Path.GetFileName(file),
-                    ToolTip = file,
-                    Tag = file
-                };
-                menuItem.Click += RecentFile_Click;
-                RecentFilesMenu.Items.Add(menuItem);
-            }
-            
-            RecentFilesMenu.Items.Add(new Separator());
-            var clearItem = new MenuItem { Header = "Clear Recent Files" };
-            clearItem.Click += (s, e) =>
-            {
-                _recentFiles.Clear();
-                SaveRecentFiles();
-                UpdateRecentFilesMenu();
-            };
-            RecentFilesMenu.Items.Add(clearItem);
-        }
-    }
-
-    private void RecentFile_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is MenuItem menuItem && menuItem.Tag is string filePath)
-        {
-            if (File.Exists(filePath))
-            {
-                OpenFile(filePath);
-            }
-            else
-            {
-                MessageBox.Show($"File not found: {filePath}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                _recentFiles.Remove(filePath);
-                SaveRecentFiles();
-                UpdateRecentFilesMenu();
-            }
-        }
-    }
 }
 
 public class TabDocument : INotifyPropertyChanged

@@ -23,5 +23,7 @@ namespace Notepad__WPF.Commands
             add => CommandManager.RequerySuggested += value;
             remove => CommandManager.RequerySuggested -= value;
         }
+
+        public static RelayCommand SaveCommand(Action? saveAction) => new(_ => saveAction?.Invoke());
     }
 }

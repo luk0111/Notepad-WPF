@@ -40,7 +40,7 @@
             </Style.Triggers>
         </Style>
         
-        <!-- Toolbar button style -->
+        <!-- buton toolbar -->
         <Style x:Key="ToolbarButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="White"/>
@@ -98,7 +98,7 @@
             </Setter>
         </Style>
         
-        <!-- Close tab button -->
+        <!-- close tab -->
         <Style x:Key="CloseTabButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
@@ -174,7 +174,7 @@
             <Setter Property="CaretBrush" Value="{StaticResource PrimaryBlue}"/>
         </Style>
         
-        <!-- Search panel button -->
+        <!-- buton search -->
         <Style x:Key="SearchPanelButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="{StaticResource PrimaryBlue}"/>
             <Setter Property="Foreground" Value="White"/>
@@ -264,20 +264,14 @@
                 </MenuItem>
             </MenuItem>
             <MenuItem Header="_View">
-                <MenuItem Header="_Word Wrap" x:Name="WordWrapMenuItem" IsCheckable="True" Click="WordWrap_Click"/>
-                <Separator/>
-                <MenuItem Header="Zoom _In" Command="local:CustomCommands.ZoomIn" InputGestureText="Ctrl++"/>
-                <MenuItem Header="Zoom _Out" Command="local:CustomCommands.ZoomOut" InputGestureText="Ctrl+-"/>
-                <MenuItem Header="_Reset Zoom" Click="ResetZoom_Click"/>
-                <Separator/>
-                <MenuItem Header="Show _Line Numbers" x:Name="LineNumbersMenuItem" IsCheckable="True" IsChecked="True"/>
+                <MenuItem Header="Folder Explorer" x:Name="FolderExplorerMenuItem" IsCheckable="True" IsChecked="True" Click="FolderExplorerMenuItem_Click"/>
             </MenuItem>
             <MenuItem Header="_Help">
                 <MenuItem Header="_About" Click="About_Click"/>
             </MenuItem>
         </Menu>
         
-        <!-- Toolbar -->
+        <!-- toolbar -->
         <Border DockPanel.Dock="Top" Padding="4">
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
@@ -324,7 +318,7 @@
             </StackPanel>
         </Border>
 
-        <!-- Status Bar -->
+        <!-- status bar -->
         <StatusBar DockPanel.Dock="Bottom">
             <StatusBarItem>
                 <TextBlock x:Name="StatusText" Text="Ready"/>
@@ -351,7 +345,7 @@
             </StatusBarItem>
         </StatusBar>
 
-        <!-- Search/Replace Panel -->
+        <!-- panel search/replace -->
         <Border x:Name="SearchPanel" DockPanel.Dock="Top" Visibility="Collapsed"
                 Background="{StaticResource BackgroundLight}" 
                 BorderBrush="{StaticResource BorderLight}" BorderThickness="0,0,0,1"
@@ -396,7 +390,7 @@
             </Grid>
         </Border>
 
-        <!-- Go To Line Dialog (shown inline) -->
+        <!-- go to line -->
         <Border x:Name="GoToLinePanel" DockPanel.Dock="Top" Visibility="Collapsed"
                 Background="{StaticResource BackgroundLight}" 
                 BorderBrush="{StaticResource BorderLight}" BorderThickness="0,0,0,1"
@@ -415,7 +409,7 @@
         </Border>
 
         <!-- file explorer -->
-        <Border DockPanel.Dock="Left" Width="300" Padding="8" Background="{StaticResource BackgroundLight}" BorderBrush="{StaticResource BorderLight}" BorderThickness="0,0,1,0">
+        <Border x:Name="FileExplorerBorder" DockPanel.Dock="Left" Width="300" Padding="8" Background="{StaticResource BackgroundLight}" BorderBrush="{StaticResource BorderLight}" BorderThickness="0,0,1,0">
             <DockPanel>
                 <TextBlock Text="File Explorer" FontWeight="SemiBold" Margin="2,0,0,8" Foreground="{StaticResource TextPrimary}" DockPanel.Dock="Top"/>
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -485,26 +479,26 @@
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         
-                        <!-- Line numbers -->
+                        <!-- line numbers -->
                         <Border x:Name="LineNumberBorder" Background="#F8FAFC" 
                                 BorderBrush="{StaticResource BorderLight}" BorderThickness="0,0,1,0"
                                 Padding="8,0">
                             <TextBlock x:Name="LineNumbers" 
                                        Foreground="{StaticResource TextSecondary}"
-                                       FontFamily="Consolas" FontSize="{Binding DataContext.EditorFontSize, RelativeSource={RelativeSource AncestorType=Window}}"
+                                       FontFamily="Consolas" FontSize="{Binding EditorFontSize, RelativeSource={RelativeSource AncestorType=Window}}"
                                        TextAlignment="Right" Padding="0,1,0,0"/>
                         </Border>
                         
-                        <!-- Editor -->
+                        <!-- editor -->
                         <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Auto" 
                                       VerticalScrollBarVisibility="Auto" x:Name="EditorScrollViewer">
                             <TextBox x:Name="Editor" 
                                      Text="{Binding Content, UpdateSourceTrigger=PropertyChanged}"
                                      AcceptsReturn="True"
                                      AcceptsTab="True"
-                                     TextWrapping="{Binding DataContext.WordWrapMode, RelativeSource={RelativeSource AncestorType=Window}}"
+                                     TextWrapping="{Binding WordWrapMode, RelativeSource={RelativeSource AncestorType=Window}}"
                                      FontFamily="Consolas"
-                                     FontSize="{Binding DataContext.EditorFontSize, RelativeSource={RelativeSource AncestorType=Window}}"
+                                     FontSize="{Binding EditorFontSize, RelativeSource={RelativeSource AncestorType=Window}}"
                                      TextChanged="Editor_TextChanged"
                                      SelectionChanged="Editor_SelectionChanged"
                                      Style="{StaticResource EditorTextBoxStyle}"
